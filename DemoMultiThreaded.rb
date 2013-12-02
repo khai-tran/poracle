@@ -9,68 +9,28 @@
 # coding: utf-8
 require 'httparty'
 require './poracle'
+require './Utilities'
 require 'optparse'
-require './thread/pool'
+require 'thread/pool'
 require 'ostruct'
 
 class Demo
   attr_reader :iv, :data, :blocksize,:newlinechars,:url,:starting_block
   NAME = "Demo"
   # This function should load @data, @iv, and @blocksize appropriately
-  def self.parse(args)
-    # The options specified on the command line will be collected in *options*.
-    # We set default values here.
-    options = OpenStruct.new
-    options.file = ""
-    options.threadsize = 1
-    options.sortfile = false
-    options.verbose = false
-
-    opt_parser = OptionParser.new do |opts|
-      opts.banner = "Usage: Demo.rb [options]"
-      opts.separator ""
-      opts.separator "Specific options:"
-
-      # Sort temprary results
-      opts.on("-s", "--sort", "Sort temporary results") do |s|
-        options.sortfile = s
-      end
-
-      # Verbose
-      opts.on("-v", "--verbose", "Show debug messages") do |v|
-        options.verbose = v
-      end
-
-      # Threadpool size
-      opts.on("-t", "--threads SIZE", "Set threadpool size") do |size|
-        options.threadsize = Integer(size)
-      end
-
-      # Save to file
-      opts.on("-f", "--file FILE","Save temporary results to file") do |file|
-        options.file = file
-      end
-
-      opts.on_tail("-h", "--help", "Show this message") do
-        puts opts
-        exit
-      end
-    end
-    opt_parser.parse!(args)
-    options
-  end
-
   def initialize()
     @data = HTTParty.get("http://localhost:20222/encrypt").parsed_response
     # Parse 'data' here
-    @data = [@data].pack("H*")
+    #@data = [@data].pack("H*")
+    @data =  [@data].pack("H*").unpack('C*')
     @iv = nil
     @blocksize = 16
   end
 
   # This should make a decryption attempt and return true/false
   def attempt_decrypt(data)
-    result = HTTParty.get("http://localhost:20222/decrypt/#{data.unpack("H*").pop}").parsed_response
+    data= data.flatten.pack('C*').unpack("H*")
+    result = HTTParty.get("http://localhost:20222/decrypt/#{data.join}").parsed_response
     # Match 'result' appropriately
     return result !~ /Fail/
   end
@@ -82,37 +42,8 @@ class Demo
   end
 end
 
-def self.parse_sessionfile(file)
-  results=[]
-  text=File.open(file).read
-  text.gsub!(/\r\n?/, "\n")
-  text.each_line do |line|
-    results[Integer(line.split(',',2)[0])]=line.split(',',2)[1].gsub("\n","")
-  end
-  return results
-end
-
-def self.sort_sessionfile(file)
-  results=[]
-  text=File.open(file).read
-  text.gsub!(/\r\n?/, "\n")
-  text.each_line do |line|
-    results[Integer(line.split(',',2)[0])]=line.split(',',2)[1]
-  end
-  File.open(file, 'w') do |f|
-  end
-  results.each_with_index do |result,i|
-    File.open(file, 'a') do |f|
-      if (result.nil?)
-        f << "#{i},\n"
-      else
-        f << "#{i},#{result}"
-      end
-    end
-  end
-end
-
-options = Demo.parse(ARGV)
+#Main Program
+options =  Utilities.parse(ARGV)
 verbose = options.verbose
 file = options.file
 skip_blocks=[]
@@ -120,15 +51,17 @@ sortfile =options.sortfile
 threadsize =options.threadsize
 
 if (sortfile)
-  sort_sessionfile(file)
+  Utilities.sort_sessionfile(file)
   exit
 end
 
 # Read already decrypted block from last time and add them to skip_blocks
-results=parse_sessionfile(file)
-results.each_with_index do |val,i|
-  if (!val.nil? and val!="\n")
-  skip_blocks<<i
+results= Utilities.parse_sessionfile(file)
+if (!results.nil?)
+  results.each_with_index do |val,i|
+    if (!val.nil? and val!="\n")
+    skip_blocks<<i
+    end
   end
 end
 
@@ -151,10 +84,10 @@ iv = "\x00" * mod.blocksize
 
 if (verbose)
   i=0
-  blocks = mod.data.unpack("a#{mod.blocksize}" * blockcount)
+  blocks= mod.data.each_slice(mod.blocksize).to_a
   blocks.each do |b|
     i = i + 1
-    puts(">>> Block #{i}: #{b.unpack("H*")}")
+    puts(">>> Block #{i}: #{b.pack("C*").unpack("H*")}")
   end
 end
 
@@ -164,16 +97,16 @@ start = Time.now
 pool = Thread.pool(threadsize)
 blockcount=mod.data.length / mod.blocksize
 # Spawn new thread for each block
-(blockcount -1 ).step(1,-1) do |i|
+(blockcount ).step(1,-1) do |i|
   if (!skip_blocks.include?(i))
     pool.process {
       result=Poracle.decrypt(mod, mod.data, iv,  verbose, i, file)
-      results[i]=result
+      results[i]=result.pack('C*').force_encoding('utf-8')
     }
   end
 end
 pool.shutdown
 puts "DECRYPTED: " + results.join
 finish= Time.now
-sort_sessionfile(file)
+Utilities.sort_sessionfile(file)
 puts sprintf("DURATION: %0.02f seconds", (finish - start) % 60)

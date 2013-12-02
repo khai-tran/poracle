@@ -69,20 +69,20 @@ module Poracle
     STDOUT.flush
     block=blocks[index]
     previous=blocks[index-1]
-    blockprime = "\0" * mod.blocksize
+    blockprime = Array.new(mod.blocksize, 0)
     (mod.blocksize - 1).step(character + 1, -1) do |i|
-      blockprime[i] = (ord(plaintext[i])  ^ (mod.blocksize - character) ^ ord(previous[i])).chr
+      blockprime[i] = (plaintext[i])  ^ (mod.blocksize - character) ^(previous[i])
     end
       # Try all possible characters in the set (hopefully the set is exhaustive)
     character_set.each do |current_guess|
-      # puts current_guess
-      # Calculate the next character of C' based on tghe plaintext character we
+      # Calculate the next character of C' based on the plaintext character we
       # want to guess. This is the mayo in the secret sauce.
-      blockprime[character] = ((mod.blocksize - character) ^ ord(previous[character]) ^ ord(current_guess)).chr()
-
+      blockprime[character] = ((mod.blocksize - character) ^ (previous[character]) ^ (current_guess))
       # Ask the mod to attempt to decrypt the string. This is the last
       # ingredient in the secret sauce - the relish, as it were.
-      result = mod.attempt_decrypt(blocks[0..index-2].join+blockprime + block)
+      new_block=Array.new
+      new_block << blocks[0..index-2] << blockprime << block
+      result = mod.attempt_decrypt(new_block)
       # Increment the number of guesses (for reporting/output purposes)
       @@guesses += 1
 
@@ -93,18 +93,20 @@ module Poracle
         if(character == mod.blocksize - 1)
           # Modify the second-last character in any way (we XOR with 1 for
           # simplicity)
-          blockprime[character - 1] = (ord(blockprime[character - 1]) ^ 1).chr
+          blockprime[character - 1] = (blockprime[character - 1]) ^ 1
           # If the decryption fails, we hit a false positive!
-          if(!mod.attempt_decrypt(blocks[0..index-2].join+blockprime + block))
-            if(@verbose)
+          new_block=Array.new
+          new_block<<blocks[0..index-2] << blockprime << block
+          if(!mod.attempt_decrypt(new_block))
+             if(@verbose)
               puts("Hit a false positive!")
-            end
+             end
             false_positive = true 
           end
         end
         # If it's not a false positive, return the character we just found
         if(!false_positive)
-          return current_guess.chr() 
+          return current_guess
         end
       end
     end
@@ -120,7 +122,7 @@ module Poracle
     previous=blocks[i-1]
     # It doesn't matter what we default the plaintext to, as long as it's long
     # enough
-    plaintext = "\0" * mod.blocksize
+    plaintext = Array.new(mod.blocksize, 0)
     # Loop through the string from the end to the beginning
     (block.length - 1).step(0, -1) do |character|
       # When character is below 0, we've arrived at the beginning of the string
@@ -148,14 +150,18 @@ module Poracle
       end
       # Break the current character (this is the secret sauce)
       c = find_character(mod, character, blocks, i, plaintext,  set, verbose)
-      plaintext[character] = c.nil?? '?':c
+      plaintext[character] = c.nil?? 0:c
+      if (c.nil?)
+        puts "Skipping block #{i}"
+      break
+      end
 	  count+=1
       if(verbose)
 		puts "#{i} --> #{plaintext}"		
       end
 	  if (count==mod.blocksize)
 		File.open(file, 'a') do |f|		
-		f.puts "#{i},#{plaintext}"	
+		f.puts "#{i},#{plaintext.pack('C*').force_encoding('utf-8')}"	
 		end
 	  end
 
@@ -168,16 +174,19 @@ module Poracle
   # If no IV is given, it's assumed to be NULL (all zeroes).
   def Poracle.decrypt(mod, data, iv = nil, verbose = true, start = data.length / mod.blocksize, file)
     # Default to a nil IV
-    if(iv.nil?)
-      iv = "\x00" * mod.blocksize
+    
+    if(!iv.nil?)
+      iv =iv.unpack('C*')
+      data  = iv + data
     end
     # Add the IV to the start of the encrypted string (for simplicity)
-    # data  = iv + data
+    
+      
     blockcount = data.length / mod.blocksize
 
     # Split the data into blocks - using unpack is kinda weird, but it's the
     # best way I could find that isn't Ruby 1.9-specific
-    blocks = data.unpack("a#{mod.blocksize}" * blockcount)
+    blocks = data.each_slice(mod.blocksize).to_a
     i = 0
     blocks.each do |b|
       i = i + 1
@@ -185,7 +194,7 @@ module Poracle
 
     # Decrypt all the blocks - from the last to the first (after the IV).
     # This can actually be done in any order.
-    result = ''
+    result = Array.new
     is_last_block = (start==blockcount-1 ? true:false)
      i=start
       # Process this block - this is where the magic happens
@@ -197,7 +206,7 @@ module Poracle
       result = new_result + result
     # Validate and remove the padding
     
-    pad_bytes = result[result.length - 1].chr
+    pad_bytes = result[result.length - 1]
     if(result[result.length - ord(pad_bytes), result.length - 1] != pad_bytes * ord(pad_bytes))
       return result
     end
