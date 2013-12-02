@@ -8,7 +8,7 @@
 #
 # coding: utf-8
 require 'httparty'
-require './poracle'
+require './Poracle'
 require './Utilities'
 require 'optparse'
 require 'thread/pool'
@@ -52,6 +52,9 @@ threadsize =options.threadsize
 
 if (sortfile)
   Utilities.sort_sessionfile(file)
+  results= Utilities.parse_sessionfile(file)
+  puts "DECRYPTED: " + results.join
+
   exit
 end
 
@@ -96,6 +99,8 @@ start = Time.now
 # Specify pool size
 pool = Thread.pool(threadsize)
 blockcount=mod.data.length / mod.blocksize
+results=Array.new(blockcount)
+
 # Spawn new thread for each block
 (blockcount ).step(1,-1) do |i|
   if (!skip_blocks.include?(i))
